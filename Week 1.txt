@@ -1,0 +1,95 @@
+/* --------------------
+   Case Study Questions
+   --------------------*/
+
+-- 1. What is the total amount each customer spent at the restaurant?
+-- 2. How many days has each customer visited the restaurant?
+-- 3. What was the first item from the menu purchased by each customer?
+-- 4. What is the most purchased item on the menu and how many times was it purchased by all customers?
+-- 5. Which item was the most popular for each customer?
+-- 6. Which item was purchased first by the customer after they became a member?
+-- 7. Which item was purchased just before the customer became a member?
+-- 8. What is the total items and amount spent for each member before they became a member?
+-- 9.  If each $1 spent equates to 10 points and sushi has a 2x points multiplier - how many points would each customer have?
+-- 10. In the first week after a customer joins the program (including their join date) they earn 2x points on all items, not just sushi - how many points do customer A and B have at the end of January?
+
+-- Solution 1:
+select distinct customer_id, sum(price) over(partition by customer_id) as Total_Spent from 
+(select a.*, b.price from dannys_diner.sales a join dannys_diner.menu b on a.product_id = b.product_id) c;
+
+-- Solution 2:
+select distinct customer_id, count(order_date) over(partition by customer_id) as Total_Visits from (select distinct customer_id, order_date from dannys_diner.sales) c;
+
+-- Solution 3:
+select distinct customer_id, product_name from
+(select *, rank() over(partition by customer_id order by order_date asc) as ranking from 
+(select a.*, b.product_name from dannys_diner.sales a join dannys_diner.menu b on a.product_id = b.product_id) c) d where ranking = 1 ;
+
+-- Solution 4:
+select product_name, count(product_name) as total_orders from (select a.*, b.product_name from dannys_diner.sales a join dannys_diner.menu b on a.product_id = b.product_id) c
+group by product_name order by total_orders desc
+limit 1;
+
+-- Solution 5:
+select customer_id, product_name from
+(select distinct customer_id, product_name, counts, rank() over(partition by customer_id order by counts desc) as ranks
+from 
+(select distinct a.*, b.product_name, count(product_name) over (partition by customer_id, product_name) as counts from dannys_diner.sales a join dannys_diner.menu b on a.product_id = b.product_id) c) d
+where ranks = 1;
+
+-- Solution 6:
+select customer_id, product_name from
+(select *, rank() over(partition by customer_id order by order_date asc) as ranking from
+(select distinct a.*, b.join_date from 
+dannys_diner.sales a join dannys_diner.members b on a.customer_id = b.customer_id
+where order_date > join_date) c) d join dannys_diner.menu e
+on d.product_id = e.product_id
+where ranking = 1;
+
+-- Solution 7:
+select customer_id, product_name from
+(select *, rank() over(partition by customer_id order by order_date desc) as ranking from
+(select distinct a.*, b.join_date from 
+dannys_diner.sales a join dannys_diner.members b on a.customer_id = b.customer_id
+where order_date < join_date) c) d join dannys_diner.menu e
+on d.product_id = e.product_id
+where ranking = 1;
+
+-- Solution 8:
+select customer_id, count(product_id), sum(price) from
+(select distinct a.*, b.join_date, c.price from 
+dannys_diner.sales a join dannys_diner.members b on a.customer_id = b.customer_id join dannys_diner.menu c on a.product_id = c.product_id 
+where order_date < join_date) d
+group by customer_id;
+
+-- Solution 9:
+select distinct customer_id, sum(price*multiplier) from
+(select a.*, product_name, price,
+(case when product_name = 'sushi' then 2 else 1 end) as Multiplier	
+from 
+dannys_diner.sales a join dannys_diner.menu b on a.product_id = b.product_id) c
+group by customer_id;
+
+-- Solution 10:
+with interim1 as (
+  select a.*, product_name, price, join_date
+ 	from 
+ 	dannys_diner.sales a join dannys_diner.menu b on a.product_id = b.product_id 
+  	join dannys_diner.members c on a.customer_id = c.customer_id
+  )
+
+select customer_id, sum(case
+	when Days_passed > 7 and product_name = 'shushi' then (Days_passed)*20*price
+    when Days_passed > 7 and product_name != 'shushi' then 7*20*price+(Days_passed-7)*10*price
+    else Days_passed*20*price end) as Points
+from (
+ select *, (case
+    when order_date < join_date OR order_date > '2021-01-31' then 0
+    else
+		case 
+        	when order_date-join_date > 7 then order_date-join_date+1-7
+    		else order_date-join_date+1 
+       	end 
+   	end) as Days_passed
+from interim1) f
+group by customer_id;
