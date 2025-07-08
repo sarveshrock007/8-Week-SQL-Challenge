@@ -1,0 +1,135 @@
+Link: https://8weeksqlchallenge.com/case-study-6/
+
+--Digital Analysis
+--Solution 1
+select count(distinct user_id) as Total_Users
+from clique_bait.users;
+
+--Solution 2
+with cookies as (
+  select distinct user_id, count(cookie_id) as Cookie_count
+  from clique_bait.users
+  group by user_id
+  )
+
+select round(avg(Cookie_count), 0) as Avg_cookies
+from cookies;
+
+--Solution 3
+select distinct date_part('month', event_time) as Months, count(distinct visit_id) as Visits
+from clique_bait.events
+group by Months
+order by Months asc;
+
+--Solution 4
+select distinct event_type, count(*)
+from clique_bait.events
+group by event_type;
+
+--Solution 5
+select round(100*count(distinct a.visit_id)/(select count(distinct visit_id) from clique_bait.events as c), 2) as Perc
+from clique_bait.events a join clique_bait.event_identifier b
+on a.event_type = b.event_type
+where event_name = 'Purchase';
+
+--Solution 6
+WITH checkout_purchase AS (
+SELECT 
+  visit_id,
+  MAX(CASE WHEN event_type = 1 AND page_id = 12 THEN 1 ELSE 0 END) AS checkout,
+  MAX(CASE WHEN event_type = 3 THEN 1 ELSE 0 END) AS purchase
+FROM clique_bait.events
+GROUP BY visit_id)
+
+SELECT 
+  ROUND(100.00 * (1-(SUM(purchase)/SUM(checkout):: numeric)),2) AS percentage_checkout_view_with_no_purchase
+FROM checkout_purchase;
+
+--Solution 7
+with cte as (
+  select distinct page_name, count(distinct visit_id) as visits
+  from clique_bait.events a join clique_bait.page_hierarchy b
+  on a.page_id = b.page_id
+  where event_type = 1
+  group by page_name
+  )
+
+select page_name from cte
+order by visits desc
+limit 3;
+
+--Solution 8
+with cte as (
+  select product_category, 
+  case when event_name = 'Page View' then 1 else 0 end as Page_View_inter,
+  case when event_name = 'Add to Cart' then 1 else 0 end as Cart_Adds_inter
+  from clique_bait.events a join clique_bait.page_hierarchy b
+  on a.page_id = b.page_id join clique_bait.event_identifier c
+  on a.event_type = c.event_type
+  )
+
+select distinct product_category, sum(Page_view_inter) as Page_Views, sum(Cart_Adds_inter) as Cart_Adds
+from cte
+where product_category is not null
+group by product_category
+order by page_views desc;
+
+--Solution 9
+select distinct product_category,
+sum(case when event_name = 'Purchase' then 1 else 0 end) as Purchases
+from clique_bait.events a join clique_bait.page_hierarchy b
+on a.page_id = b.page_id join clique_bait.event_identifier c
+on a.event_type = c.event_type
+where product_category is not null
+group by product_category
+order by Purchases desc
+limit 3;
+
+
+--Product Funnel Analysis
+WITH product_page_events AS ( -- Note 1
+  SELECT 
+    a.visit_id,
+    b.product_id,
+    b.page_name AS product_name,
+    b.product_category,
+    SUM(CASE WHEN a.event_type = 1 THEN 1 ELSE 0 END) AS page_view, -- 1 
+    SUM(CASE WHEN a.event_type = 2 THEN 1 ELSE 0 END) AS cart_add -- 2 
+  FROM clique_bait.events AS a
+  JOIN clique_bait.page_hierarchy AS b
+    ON a.page_id = b.page_id
+  WHERE product_id IS NOT NULL
+  GROUP BY a.visit_id, b.product_id, b.page_name, b.product_category
+),
+purchase_events AS ( -- Note 2
+  SELECT 
+    DISTINCT visit_id
+  FROM clique_bait.events
+  WHERE event_type = 3 -- 3 for Purchase
+),
+combined_table AS ( -- Note 3
+  SELECT 
+    c.visit_id, 
+    c.product_id, 
+    c.product_name, 
+    c.product_category, 
+    c.page_view, 
+    c.cart_add,
+    CASE WHEN d.visit_id IS NOT NULL THEN 1 ELSE 0 END AS purchase
+  FROM product_page_events AS c
+  LEFT JOIN purchase_events AS d
+    ON c.visit_id = d.visit_id
+),
+product_info AS (
+  SELECT 
+    product_name, 
+    product_category, 
+    SUM(page_view) AS views,
+    SUM(cart_add) AS cart_adds, 
+    SUM(CASE WHEN cart_add = 1 AND purchase = 0 THEN 1 ELSE 0 END) AS abandoned,
+    SUM(CASE WHEN cart_add = 1 AND purchase = 1 THEN 1 ELSE 0 END) AS purchases
+  FROM combined_table
+  GROUP BY product_id, product_name, product_category)
+
+SELECT *
+FROM product_info;

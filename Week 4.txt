@@ -1,0 +1,145 @@
+Question:
+A. Customer Nodes Exploration
+How many unique nodes are there on the Data Bank system?
+What is the number of nodes per region?
+How many customers are allocated to each region?
+How many days on average are customers reallocated to a different node?
+What is the median, 80th and 95th percentile for this same reallocation days metric for each region?
+
+B. Customer Transactions
+What is the unique count and total amount for each transaction type?
+What is the average total historical deposit counts and amounts for all customers?
+For each month - how many Data Bank customers make more than 1 deposit and either 1 purchase or 1 withdrawal in a single month?
+What is the closing balance for each customer at the end of the month?
+What is the percentage of customers who increase their closing balance by more than 5%?
+
+
+
+Solution
+--- A. Customer Nodes Exploration
+--Solution 1
+SELECT COUNT(distinct node_id) FROM data_bank.customer_nodes;
+
+--Solution 2
+select a.region_id, region_name, count(distinct node_id)
+from data_bank.customer_nodes a join data_bank.regions b
+	on a.region_id = b.region_id
+group by a.region_id, region_name
+order by a.region_id asc;
+
+--Solution 3
+select a.region_id, region_name, count(distinct customer_id)
+from data_bank.customer_nodes a join data_bank.regions b
+	on a.region_id = b.region_id
+group by a.region_id, region_name
+order by a.region_id asc; 
+
+--Solution 4
+WITH node_days AS (
+  SELECT 
+    customer_id, 
+    node_id,
+    end_date - start_date AS days_in_node
+  FROM data_bank.customer_nodes
+  WHERE end_date != '9999-12-31' 
+) 
+, total_node_days AS (
+  SELECT 
+    customer_id,
+    node_id,
+    SUM(days_in_node) AS total_days_in_node
+  FROM node_days
+  GROUP BY customer_id, node_id
+)
+
+SELECT ROUND(AVG(total_days_in_node)) AS avg_node_reallocation_days
+FROM total_node_days;
+
+--Solution 5
+
+--- B. Customer Transactions
+--Solution 1
+select txn_type, count(txn_amount), sum(txn_amount)
+from data_bank.customer_transactions
+group by txn_type;
+
+--Solution 2
+with avg_values as (select distinct customer_id, count(txn_amount) as deposits, sum(txn_amount) as totals
+	from data_bank.customer_transactions
+	where txn_type = 'deposit'
+	group by customer_id)
+
+select round(avg(deposits)), round(avg(totals))
+from avg_values;
+
+--Solution 3
+WITH monthly_transaction AS (
+  SELECT 
+    customer_id, 
+    DATE_PART('month', txn_date) AS mth,
+    SUM(CASE WHEN txn_type = 'deposit' THEN 1 ELSE 0 END) AS deposit_count,
+    SUM(CASE WHEN txn_type = 'purchase' THEN 1 ELSE 0 END) AS purchase_count,
+    SUM(CASE WHEN txn_type = 'withdrawal' THEN 1 ELSE 0 END) AS withdrawal_count
+  FROM data_bank.customer_transactions
+  GROUP BY customer_id, mth
+)
+
+SELECT
+  mth,
+  COUNT(DISTINCT customer_id) AS customer_count
+FROM monthly_transaction
+WHERE deposit_count > 1 
+  AND (purchase_count >= 1 OR withdrawal_count >= 1)
+GROUP BY mth
+ORDER BY mth;
+
+--Solution 4
+with Transactions as (select customer_id, date_part('month', txn_date) as Months, (case 
+	when txn_type ='deposit' then txn_amount*1
+    when txn_type ='purchase' then txn_amount*(-1)
+	when txn_type ='withdraw' then txn_amount*(-1) end) as Txn_Amount
+from data_bank.customer_transactions
+    				)
+                    
+select distinct customer_id, Months, sum(Txn_Amount) over (partition by customer_id order by Months asc) as MAB
+from Transactions 
+order by customer_id asc, Months asc
+limit 10;
+
+--Solution 5
+with Transactions as (select customer_id, date_part('month', txn_date) as Months, (case 
+	when txn_type ='deposit' then txn_amount*1
+    when txn_type ='purchase' then txn_amount*(-1)
+	when txn_type ='withdraw' then txn_amount*(-1) end) as Txn_Amount
+from data_bank.customer_transactions
+    				)
+                    
+select distinct customer_id, Months, sum(Txn_Amount) over (partition by customer_id order by Months asc) as MAB into table temp1
+from Transactions 
+order by customer_id asc, Months asc;
+
+select distinct customer_id, Months, MAB, max(Months) over (partition by customer_id) as mxm, min(Months) over (partition by customer_id) as mnm
+into table temp2
+from temp1
+order by customer_id asc, Months asc;
+
+select distinct a.customer_id, a.MAB as MSB, b.MAB as MEB
+into table temp3
+from temp2 a join (select * from temp2 where mxm = Months) b
+on a.customer_id = b.customer_id
+where a.mnm = a.Months;
+
+select distinct customer_id, 
+	(case when MEB > MSB then 100.00*(MEB-MSB)/MSB
+    	 else 100.00*(MSB+MEB)/MSB
+    end) as perc_increase
+into table temp4
+from temp3
+order by customer_id asc;
+
+select count(customer_id),
+	case when perc_increase > 5 then 'increased'
+    	 else 'decreased' end as final_res
+from temp4 
+group by final_res
+

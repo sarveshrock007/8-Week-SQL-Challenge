@@ -1,0 +1,121 @@
+Week 3
+1. How many customers has Foodie-Fi ever had?
+2. What is the monthly distribution of trial plan start_date values for our dataset - use the start of the month as the group by value
+3. What plan start_date values occur after the year 2020 for our dataset? Show the breakdown by count of events for each plan_name
+4. What is the customer count and percentage of customers who have churned rounded to 1 decimal place?
+5. How many customers have churned straight after their initial free trial - what percentage is this rounded to the nearest whole number?
+6. What is the number and percentage of customer plans after their initial free trial?
+7. What is the customer count and percentage breakdown of all 5 plan_name values at 2020-12-31?
+8. How many customers have upgraded to an annual plan in 2020?
+9. How many days on average does it take for a customer to an annual plan from the day they join Foodie-Fi?
+10. Can you further breakdown this average value into 30 day periods (i.e. 0-30 days, 31-60 days etc)
+11. How many customers downgraded from a pro monthly to a basic monthly plan in 2020?
+
+Solution
+--Solution 1
+SELECT count(distinct customer_id) as totals FROM foodie_fi.subscriptions;
+
+--Solution 2
+select distinct DATE_PART('month', start_date) as Months, count(distinct customer_id) from foodie_fi.subscriptions
+where plan_id = 0
+group by date_part('month', start_date) order by Months asc;
+
+--Solution 3
+select distinct plan_name, a.plan_id, count(a.plan_id) as Tot_events from foodie_fi.subscriptions a
+join foodie_fi.plans b on a.plan_id = b.plan_id
+where date_part('year', start_date) > 2020 
+group by plan_name, a.plan_id
+order by plan_id asc;
+
+--Solution 4
+with churned_cust as ( select count(distinct customer_id) as churned_count from foodie_fi.subscriptions where plan_id = 4)
+
+select count(distinct customer_id), 
+round(100.0*(select churned_count from churned_cust)/(select count(distinct customer_id) from foodie_fi.subscriptions), 1)
+from foodie_fi.subscriptions
+where plan_id = 4;
+
+--Solution 5
+with churned_count as(
+	select count(distinct customer_id) as counts from 
+		(select distinct customer_id, sum(plan_id) as trials from 						foodie_fi.subscriptions
+		group by customer_id
+		having sum(plan_id) = 4
+   		 ) a
+)
+
+select counts, ceiling(100.00*counts/(select count(distinct customer_id) from foodie_fi.subscriptions))
+from churned_count;
+
+--Solution 6
+WITH next_plans AS (
+  SELECT 
+    customer_id, 
+    plan_id, 
+    LEAD(plan_id) OVER(
+      PARTITION BY customer_id 
+      ORDER BY plan_id) as next_plan_id
+  FROM foodie_fi.subscriptions
+)
+
+SELECT 
+  next_plan_id AS plan_id, 
+  COUNT(customer_id) AS converted_customers,
+  ROUND(100 * 
+    COUNT(customer_id)::NUMERIC 
+    / (SELECT COUNT(DISTINCT customer_id) 
+      FROM foodie_fi.subscriptions)
+  ,1) AS conversion_percentage
+FROM next_plans
+WHERE next_plan_id IS NOT NULL 
+  AND plan_id = 0
+GROUP BY next_plan_id
+ORDER BY next_plan_id;
+
+--Solution 7
+WITH next_dates AS (
+SELECT customer_id, plan_id, start_date, LEAD(start_date) OVER (
+      PARTITION BY customer_id
+      ORDER BY start_date
+    ) AS next_date
+  FROM foodie_fi.subscriptions WHERE start_date <= '2020-12-31'
+)
+
+SELECT
+	plan_id, COUNT(DISTINCT customer_id) AS customers,
+  ROUND(100.0 * 
+    COUNT(DISTINCT customer_id)
+    / (SELECT COUNT(DISTINCT customer_id) 
+      FROM foodie_fi.subscriptions)
+  ,1) AS percentage
+FROM next_dates
+WHERE next_date IS NULL
+GROUP BY plan_id;
+
+--Solution 8
+with cte as (select customer_id, plan_id, 
+	lead(plan_id) over(partition by customer_id order by plan_id) as next_plan, 	start_date
+from foodie_fi.subscriptions
+where date_part('year', start_date) = 2020)
+
+select count(distinct customer_id) as upgraded_count
+from cte where next_plan = 3;
+
+--Solution 9
+With trials as (select customer_id, start_date as trial_date from 								foodie_fi.subscriptions where plan_id = 0),
+			annuals as (select customer_id, start_date as annual_date from
+     					foodie_fi.subscriptions where plan_id = 3)
+     
+select round(avg(annual_date - trial_date), 0) from trials a join annuals b on
+a.customer_id = b.customer_id;
+
+--Solution 11
+with temp2 as (select customer_id, plan_id, 
+		lead(plan_id) over (partition by customer_id order by start_date asc)
+        as Next_plan
+        from foodie_fi.subscriptions
+         where date_part('year', start_date) = 2020)
+     
+select count(customer_id) from temp2 
+where plan_id = 2 and Next_plan = 1;
+               
